@@ -2,10 +2,9 @@ import express from 'express';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import User from '../model/User.js';
-import nodemailer from "nodemailer";
 
 const router = express.Router();
-const JWT_SECRET = 'howareyou??madam';
+const JWT_SECRET = process.env.JWT_SECRET || 'howareyou??madam';
 const JWT_EXPIRES_IN = '3d';
 
 const createToken = (userId) => {
@@ -14,51 +13,24 @@ const createToken = (userId) => {
 
 // SIGNUP + AUTO-LOGIN (set cookie)
 router.post('/signup', async (req, res) => {
-    const { email, password, name,otp } = req.body;
-    if(email && !password && !otp){
-        const user = await User.findOne({ email });
-        if(user){
-            return res.status(400).json({ error: 'User already exists' });
-        }
-        const otp = Math.floor(100000 + Math.random() * 900000);
-        const otpExpires = Date.now() + 10 * 60 * 1000;
-        const newUser = await User.create({email,otp,otpExpires})
-        newUser.save();
-
-        const transporter = nodemailer.createTransport({
-            service: 'gmail', // or use SMTP details
-            auth: {
-                user: process.env.EMAIL_USER, // your email
-                pass: process.env.EMAIL_PASS  // your email password or app password
-            }
-        });
-
-        const mailOptions = {
-            from: process.env.EMAIL_USER,
-            to: email,
-            subject: 'Your OTP Code',
-            text: `Your OTP is ${generatedOtp}. It will expire in 10 minutes.`
-        };
-
-        // send the email
-        transporter.sendMail(mailOptions, (error, info) => {
-            if (error) {
-                console.error(error);
-                return res.status(500).json({ error: 'Error sending OTP email' });
-            } else {
-                return res.status(200).json({ message: 'OTP sent successfully', email });
-            }
-        });
-        
-    }
+    const { email, password, name } = req.body;
+    
     try {
+        // Validate required fields
+        if (!email || !password || !name) {
+            return res.status(400).json({ error: 'Email, password, and name are required' });
+        }
+
+        // Check if user already exists
         const exists = await User.findOne({ email });
         if (exists) return res.status(400).json({ error: 'User already exists' });
 
+        // Hash password and create user
         const hashed = await bcrypt.hash(password, 10);
         const user = await User.create({ name, email, password: hashed });
-        user.save()
+        await user.save();
 
+        // Create token and set cookie
         const token = createToken(user._id);
 
         res.cookie('token', token, {
@@ -70,7 +42,7 @@ router.post('/signup', async (req, res) => {
 
         res.status(201).json({ message: 'User created & logged in', token: token, userId: user._id });
     } catch (err) {
-        res.status(500).json({ error: 'Signup failed' + err });
+        res.status(500).json({ error: 'Signup failed: ' + err.message });
     }
 });
 
