@@ -25,13 +25,19 @@ app.use(cors({
     ].filter(Boolean),
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization']
+    allowedHeaders: ['Content-Type', 'Authorization', 'Accept']
   }));
   
 app.use(express.json());
 app.use(cookieParser());
 
+// Mount routes
 app.use('/api/auth', authRoutes);
+
+// 404 handler
+app.use((req, res) => {
+    res.status(404).json({ error: 'Not Found' });
+});
 
 // Health check endpoint for Render
 app.get('/health', (req, res) => {
@@ -65,6 +71,15 @@ mongoose.connect(MONGO_URI, {
         console.error('MongoDB connection error:', err);
         process.exit(1);
     });
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+    console.error(err.stack);
+    res.status(500).json({ 
+        error: 'Something broke!',
+        message: err.message 
+    });
+});
 
 
 app.post("/chat/ai", async (req, res) => {
