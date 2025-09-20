@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: restocker-backend
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        fromService:
+          type: web
+          name: restocker-backend
+          property: port
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_EXPIRES_IN
+        value: 3d
+      - key: MONGODB_URI
+        sync: false  # Set this manually in Render dashboard
+      - key: GEMINI_API_KEY
+        sync: false  # Set this manually in Render dashboard
+      - key: FRONTEND_URL
+        value: https://restocker-frontend.vercel.app

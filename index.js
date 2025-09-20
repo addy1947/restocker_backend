@@ -23,7 +23,9 @@ app.use(cors({
       "https://restocker-frontend.vercel.app",
       process.env.FRONTEND_URL
     ].filter(Boolean),
-    credentials: true
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization']
   }));
   
 app.use(express.json());
@@ -288,4 +290,35 @@ app.get("/:_id/product", async (req, res) => {
     const product = await Product.findOne({ userId: _id })
     res.status(200).json(product.allProducts)
 })
-app.listen(PORT, () => console.log('Server running on port 5000'));
+
+// Global error handler
+app.use((err, req, res, next) => {
+    console.error('Error:', err.stack);
+    res.status(500).json({ 
+        error: 'Something went wrong!',
+        message: process.env.NODE_ENV === 'development' ? err.message : 'Internal server error'
+    });
+});
+
+// Handle 404 routes
+app.use('*', (req, res) => {
+    res.status(404).json({ 
+        error: 'Route not found',
+        message: `Cannot ${req.method} ${req.originalUrl}`
+    });
+});
+
+// Graceful shutdown handling
+process.on('SIGTERM', () => {
+    console.log('SIGTERM received, shutting down gracefully');
+    mongoose.connection.close(() => {
+        console.log('MongoDB connection closed');
+        process.exit(0);
+    });
+});
+
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server running on port ${PORT}`);
+    console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+    console.log(`Health check available at: /health`);
+});
