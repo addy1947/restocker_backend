@@ -31,9 +31,38 @@ app.use(cookieParser());
 
 app.use('/api/auth', authRoutes);
 
-mongoose.connect(MONGO_URI)
-    .then(() => console.log('MongoDB connected'))
-    .catch(err => console.error('DB error:', err));
+// Health check endpoint for Render
+app.get('/health', (req, res) => {
+    res.status(200).json({ 
+        status: 'OK', 
+        message: 'Server is running',
+        timestamp: new Date().toISOString(),
+        uptime: process.uptime()
+    });
+});
+
+// Root endpoint
+app.get('/', (req, res) => {
+    res.json({ 
+        message: 'Restocker Backend API', 
+        version: '1.0.0',
+        endpoints: {
+            health: '/health',
+            auth: '/api/auth',
+            chat: '/chat/ai'
+        }
+    });
+});
+
+mongoose.connect(MONGO_URI, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+})
+    .then(() => console.log('MongoDB connected successfully'))
+    .catch(err => {
+        console.error('MongoDB connection error:', err);
+        process.exit(1);
+    });
 
 
 app.post("/chat/ai", async (req, res) => {
