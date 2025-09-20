@@ -26,12 +26,12 @@ app.use(cors({
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'Accept']
-  }));
-  
+}));
+
 app.use(express.json());
 app.use(cookieParser());
 
-// Mount routes
+// Mount auth routes
 app.use('/auth', authRoutes);
 
 // 404 handler
@@ -39,7 +39,7 @@ app.use((req, res) => {
     res.status(404).json({ error: 'Not Found' });
 });
 
-// Health check endpoint for Render
+// Health check endpoint
 app.get('/health', (req, res) => {
     res.status(200).json({ 
         status: 'OK', 
@@ -56,12 +56,13 @@ app.get('/', (req, res) => {
         version: '1.0.0',
         endpoints: {
             health: '/health',
-            auth: '/api/auth',
+            auth: '/auth',
             chat: '/chat/ai'
         }
     });
 });
 
+// Connect to MongoDB
 mongoose.connect(MONGO_URI, {
     useNewUrlParser: true,
     useUnifiedTopology: true,
@@ -72,16 +73,7 @@ mongoose.connect(MONGO_URI, {
         process.exit(1);
     });
 
-// Error handling middleware
-app.use((err, req, res, next) => {
-    console.error(err.stack);
-    res.status(500).json({ 
-        error: 'Something broke!',
-        message: err.message 
-    });
-});
-
-
+// AI Chat endpoint
 app.post("/chat/ai", async (req, res) => {
     const { message, userId, productId } = req.body;
     if (!message) return res.status(400).json({ reply: "Message is required" });
@@ -89,29 +81,27 @@ app.post("/chat/ai", async (req, res) => {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) return res.status(500).json({ reply: "AI service not configured" });
 
-
     const prompt = productId
         ? `You are a Restocker AI and here to help.
-      Do not answer anything else. Do not have simple chat.
-      You are an assistant that detects if the user wants to add stock for a product or add a new product.
-      If adding stock, respond ONLY with:
-      {"intent":"add_stock","data":[{"expiryDate":"YYYY-MM-DD","qty":number}, {...}]}
-      If adding product, respond ONLY with:
-      {"intent":"add_product","data":[{"name":"...","description":"...","measure":"..."}, {...}]}
-      If not adding anything, respond ONLY with:
-      {"intent":"chat","reply":"<your reply here>"}
-      Do not add any text before or after the JSON.
-      User: ${message}`
+Do not answer anything else. Do not have simple chat.
+You are an assistant that detects if the user wants to add stock for a product or add a new product.
+If adding stock, respond ONLY with:
+{"intent":"add_stock","data":[{"expiryDate":"YYYY-MM-DD","qty":number}, {...}]}
+If adding product, respond ONLY with:
+{"intent":"add_product","data":[{"name":"...","description":"...","measure":"..."}, {...}]}
+If not adding anything, respond ONLY with:
+{"intent":"chat","reply":"<your reply here>"}
+Do not add any text before or after the JSON.
+User: ${message}`
         : `You are a Restocker AI and here to help.
-      Do not answer anything else. Do not have simple chat.
-      You are an assistant that detects if the user wants to add one or more products to their inventory.
-      If yes, respond ONLY with:
-      {"intent":"add_product","data":[{"name":"...","description":"...","measure":"..."}, {...}]}
-      If not, respond ONLY with:
-      {"intent":"chat","reply":"<your reply here>"}
-      Do not add any text before or after the JSON.
-      User: ${message}`;
-
+Do not answer anything else. Do not have simple chat.
+You are an assistant that detects if the user wants to add one or more products to their inventory.
+If yes, respond ONLY with:
+{"intent":"add_product","data":[{"name":"...","description":"...","measure":"..."}, {...}]}
+If not, respond ONLY with:
+{"intent":"chat","reply":"<your reply here>"}
+Do not add any text before or after the JSON.
+User: ${message}`;
 
     try {
         const response = await axios.post(
@@ -130,18 +120,13 @@ app.post("/chat/ai", async (req, res) => {
 
         const aiData = JSON.parse(aiText);
 
-        // === Case 1: When productId is present (Add stock or add product) ===
         if (productId) {
             if (aiData.intent === "add_stock") {
                 const stockEntries = aiData.data;
                 let stockDoc = await Stock.findOne({ userId, productId });
 
                 if (!stockDoc) {
-                    stockDoc = await Stock.create({
-                        userId,
-                        productId,
-                        stockDetail: stockEntries
-                    });
+                    stockDoc = await Stock.create({ userId, productId, stockDetail: stockEntries });
                     return res.json({ reply: `✅ ${stockEntries.length} stock entry(ies) added successfully.`, stockDoc });
                 }
 
@@ -155,10 +140,7 @@ app.post("/chat/ai", async (req, res) => {
                 let exist = await Product.findOne({ userId });
 
                 if (!exist) {
-                    const product = await Product.create({
-                        userId,
-                        allProducts: products
-                    });
+                    const product = await Product.create({ userId, allProducts: products });
                     return res.json({ reply: `✅ ${products.length} product(s) added successfully.`, product });
                 }
 
@@ -174,16 +156,12 @@ app.post("/chat/ai", async (req, res) => {
             return res.json({ reply: "I didn't understand your request." });
         }
 
-        // === Case 2: When productId is NOT present (Add product flow only) ===
         if (aiData.intent === "add_product") {
             const products = aiData.data;
             let exist = await Product.findOne({ userId });
 
             if (!exist) {
-                const product = await Product.create({
-                    userId,
-                    allProducts: products
-                });
+                const product = await Product.create({ userId, allProducts: products });
                 return res.json({ reply: `✅ ${products.length} product(s) added successfully.`, product });
             }
 
@@ -208,103 +186,80 @@ app.post("/chat/ai", async (req, res) => {
     }
 });
 
-
-
-
-
-
-app.post("/:_id/product/add", async (req, res) => {
-    const { _id } = req.params
-    const { name, description, measure } = req.body
-    const exist = await Product.findOne({ userId: _id })
+// Product routes
+app.post("/:id/product/add", async (req, res) => {
+    const { id } = req.params;
+    const { name, description, measure } = req.body;
+    const exist = await Product.findOne({ userId: id });
     if (!exist) {
-        const product = await Product.create({ userId: _id, allProducts: [{ name, description, measure }] })
-        res.status(201).json({ message: "Product added successfully", product })
+        const product = await Product.create({ userId: id, allProducts: [{ name, description, measure }] });
+        return res.status(201).json({ message: "Product added successfully", product });
     }
-    exist.allProducts.push({ name, description, measure })
-    await exist.save()
-    res.status(200).json({ message: "Product added successfully", exist })
-})
+    exist.allProducts.push({ name, description, measure });
+    await exist.save();
+    res.status(200).json({ message: "Product added successfully", exist });
+});
 
+// Stock routes
+app.get("/:id/product/:productId/stock", async (req, res) => {
+    const { id, productId } = req.params;
+    const stock = await Stock.findOne({ userId: id, productId });
+    if (!stock) return res.status(404).json({ message: "Stock not found" });
+    res.status(200).json(stock.stockDetail);
+});
 
-
-app.get("/:_id/product/:productId/stock", async (req, res) => {
-    const { _id, productId } = req.params
-    const stock = await Stock.findOne({ userId: _id, productId })
+app.post("/:id/product/:productId/stock/add", async (req, res) => {
+    const { id, productId } = req.params;
+    const { expiryDate, qty } = req.body;
+    const stock = await Stock.findOne({ userId: id, productId });
     if (!stock) {
-        res.status(404).json({ message: "Stock not found" })
+        const newStock = await Stock.create({ userId: id, productId, stockDetail: [{ expiryDate, qty }] });
+        await newStock.save();
+        return res.status(201).json({ message: "Stock added successfully", newStock });
     }
-    res.status(200).json(stock.stockDetail)
+    stock.stockDetail.push({ expiryDate, qty });
+    await stock.save();
+    res.status(200).json({ message: "Stock added successfully", stock });
+});
 
-})
-app.post("/:_id/product/:productId/stock/add", async (req, res) => {
-    const { _id, productId } = req.params
-    const { expiryDate, qty } = req.body
-    const stock = await Stock.findOne({ userId: _id, productId })
-    if (!stock) {
-        const newStock = await Stock.create({ userId: _id, productId, stockDetail: [{ expiryDate, qty }] })
-        await newStock.save()
-        res.status(201).json({ message: "Stock added Succesfully", newStock })
-    }
-    stock.stockDetail.push({ expiryDate, qty })
-    await stock.save()
-    res.status(200).json({ message: "Stock added Succesfully", stock })
-
-})
-app.post("/:_id/product/:productId/stock/use", async (req, res) => {
-    const { _id, productId } = req.params;
+app.post("/:id/product/:productId/stock/use", async (req, res) => {
+    const { id, productId } = req.params;
     const { usedQty, stockId } = req.body;
-    const stock = await Stock.findOne({
-        userId: _id,
-        productId,
-        stockDetail: { $elemMatch: { _id: stockId } }
-    });
-    if (!stock) {
-        return res.status(404).json({ message: "Stock not found" });
-    }
-    const stockItem = stock.stockDetail.find(
-        item => item._id.toString() === stockId
-    );
-    if (!stockItem) {
-        return res.status(404).json({ message: "Stock item not found" });
-    }
-    if (usedQty > stockItem.qty) {
-        return res.status(400).json({ message: "Used quantity exceeds available stock" });
-    }
+    const stock = await Stock.findOne({ userId: id, productId, stockDetail: { $elemMatch: { _id: stockId } } });
+    if (!stock) return res.status(404).json({ message: "Stock not found" });
+
+    const stockItem = stock.stockDetail.find(item => item._id.toString() === stockId);
+    if (!stockItem) return res.status(404).json({ message: "Stock item not found" });
+
+    if (usedQty > stockItem.qty) return res.status(400).json({ message: "Used quantity exceeds available stock" });
+
     stockItem.qty -= usedQty;
     stockItem.entry.push({ usedQty, time: new Date() });
     await stock.save();
     res.status(200).json({ message: "Stock used successfully", stock });
 });
 
-app.get("/:_id/instock", async (req, res) => {
-    const { _id } = req.params
-    const instocks = await Stock.find({ userId: _id })
-    if (!instocks || instocks.length === 0) {
-        res.status(404).json({ message: "No stock found" })
-        return
-    }
-    const product = await Product.findOne({ userId: _id })
-    if (!product) {
-        res.status(404).json({ message: "No product found" })
-        return
-    }
+app.get("/:id/instock", async (req, res) => {
+    const { id } = req.params;
+    const instocks = await Stock.find({ userId: id });
+    if (!instocks || instocks.length === 0) return res.status(404).json({ message: "No stock found" });
 
-    // Combine all stock details with their product IDs
+    const product = await Product.findOne({ userId: id });
+    if (!product) return res.status(404).json({ message: "No product found" });
+
     const stockWithProducts = instocks.map(stock => ({
         productId: stock.productId,
         stockDetail: stock.stockDetail
-    }))
+    }));
 
-    res.status(200).json({ message: "Stock is found", stockWithProducts, product })
-})
+    res.status(200).json({ message: "Stock is found", stockWithProducts, product });
+});
 
-
-app.get("/:_id/product", async (req, res) => {
-    const { _id } = req.params
-    const product = await Product.findOne({ userId: _id })
-    res.status(200).json(product.allProducts)
-})
+app.get("/:id/product", async (req, res) => {
+    const { id } = req.params;
+    const product = await Product.findOne({ userId: id });
+    res.status(200).json(product.allProducts);
+});
 
 // Global error handler
 app.use((err, req, res, next) => {
@@ -323,7 +278,7 @@ app.use('*', (req, res) => {
     });
 });
 
-// Graceful shutdown handling
+// Graceful shutdown
 process.on('SIGTERM', () => {
     console.log('SIGTERM received, shutting down gracefully');
     mongoose.connection.close(() => {
