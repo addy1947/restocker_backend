@@ -32,7 +32,7 @@ app.use(express.json());
 app.use(cookieParser());
 
 // Mount routes
-app.use('/api/auth', authRoutes);
+app.use('/auth', authRoutes);
 
 // 404 handler
 app.use((req, res) => {
