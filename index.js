@@ -18,9 +18,13 @@ const MONGO_URI = 'mongodb://localhost:27017/restocker';
 const app = express();
 
 app.use(cors({
-    origin: 'http://localhost:5173',  // your React frontend
-    credentials: true                // allow cookies
-}));
+    origin: [
+      "http://localhost:5173",
+      "https://restocker-frontend.vercel.app"
+    ],
+    credentials: true
+  }));
+  
 app.use(express.json());
 app.use(cookieParser());
 
