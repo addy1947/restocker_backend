@@ -67,14 +67,22 @@ mongoose.connect(MONGO_URI)
 
 // AI Chat endpoint
 app.post("/chat/ai", async (req, res) => {
-    const { message, userId, productId } = req.body;
-    if (!message) return res.status(400).json({ reply: "Message is required" });
-    
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) return res.status(500).json({ reply: "AI service not configured" });
+    try {
+        const { message, userId, productId } = req.body;
+        
+        // Validate required fields
+        if (!message) {
+            return res.status(400).json({ reply: "Message is required" });
+        }
+        
+        const apiKey = process.env.GEMINI_API_KEY;
+        if (!apiKey) {
+            console.error('GEMINI_API_KEY not configured');
+            return res.status(500).json({ reply: "AI service not configured" });
+        }
 
-    const prompt = productId
-        ? `You are a Restocker AI and here to help.
+        const prompt = productId
+            ? `You are a Restocker AI and here to help.
 Do not answer anything else. Do not have simple chat.
 You are an assistant that detects if the user wants to add stock for a product or add a new product.
 If adding stock, respond ONLY with:
@@ -85,7 +93,7 @@ If not adding anything, respond ONLY with:
 {"intent":"chat","reply":"<your reply here>"}
 Do not add any text before or after the JSON.
 User: ${message}`
-        : `You are a Restocker AI and here to help.
+            : `You are a Restocker AI and here to help.
 Do not answer anything else. Do not have simple chat.
 You are an assistant that detects if the user wants to add one or more products to their inventory.
 If yes, respond ONLY with:
@@ -95,7 +103,7 @@ If not, respond ONLY with:
 Do not add any text before or after the JSON.
 User: ${message}`;
 
-    try {
+        console.log('Making request to Gemini API...');
         const response = await axios.post(
             `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
             {
@@ -107,38 +115,73 @@ User: ${message}`;
             }
         );
 
+        console.log('Gemini API response received');
         let aiText = response.data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+        console.log('AI Text received:', aiText);
+        
+        if (!aiText) {
+            return res.json({ reply: "I couldn't generate a response. Please try again." });
+        }
+        
         aiText = aiText.replace(/```json|```/g, "").trim();
+        console.log('Cleaned AI Text:', aiText);
 
-        const aiData = JSON.parse(aiText);
+        let aiData;
+        try {
+            aiData = JSON.parse(aiText);
+        } catch (parseError) {
+            console.error('JSON Parse Error:', parseError);
+            console.error('Failed to parse AI text:', aiText);
+            return res.json({ reply: "I had trouble understanding that. Could you please rephrase your request?" });
+        }
+
+        console.log('Parsed AI Data:', aiData);
 
         if (productId) {
             if (aiData.intent === "add_stock") {
-                const stockEntries = aiData.data;
-                let stockDoc = await Stock.findOne({ userId, productId });
+                try {
+                    const stockEntries = aiData.data;
+                    if (!stockEntries || !Array.isArray(stockEntries)) {
+                        return res.json({ reply: "Invalid stock data format." });
+                    }
+                    
+                    let stockDoc = await Stock.findOne({ userId, productId });
 
-                if (!stockDoc) {
-                    stockDoc = await Stock.create({ userId, productId, stockDetail: stockEntries });
+                    if (!stockDoc) {
+                        stockDoc = await Stock.create({ userId, productId, stockDetail: stockEntries });
+                        return res.json({ reply: `✅ ${stockEntries.length} stock entry(ies) added successfully.`, stockDoc });
+                    }
+
+                    stockDoc.stockDetail.push(...stockEntries);
+                    await stockDoc.save();
                     return res.json({ reply: `✅ ${stockEntries.length} stock entry(ies) added successfully.`, stockDoc });
+                } catch (dbError) {
+                    console.error('Database error in add_stock:', dbError);
+                    return res.json({ reply: "Failed to add stock. Please try again." });
                 }
-
-                stockDoc.stockDetail.push(...stockEntries);
-                await stockDoc.save();
-                return res.json({ reply: `✅ ${stockEntries.length} stock entry(ies) added successfully.`, stockDoc });
             }
 
             if (aiData.intent === "add_product") {
-                const products = aiData.data;
-                let exist = await Product.findOne({ userId });
+                try {
+                    const products = aiData.data;
+                    if (!products || !Array.isArray(products)) {
+                        return res.json({ reply: "Invalid product data format." });
+                    }
+                    
+                    let exist = await Product.findOne({ userId });
 
-                if (!exist) {
-                    const product = await Product.create({ userId, allProducts: products });
-                    return res.json({ reply: `✅ ${products.length} product(s) added successfully.`, product });
+                    if (!exist) {
+                        const product = await Product.create({ userId, allProducts: products });
+                        return res.json({ reply: `✅ ${products.length} product(s) added successfully.`, product });
+                    }
+
+                    exist.allProducts.push(...products);
+                    await exist.save();
+                    return res.json({ reply: `✅ ${products.length} product(s) added successfully.`, exist });
+                } catch (dbError) {
+                    console.error('Database error in add_product:', dbError);
+                    return res.json({ reply: "Failed to add product. Please try again." });
                 }
-
-                exist.allProducts.push(...products);
-                await exist.save();
-                return res.json({ reply: `✅ ${products.length} product(s) added successfully.`, exist });
             }
 
             if (aiData.intent === "chat") {
@@ -149,17 +192,26 @@ User: ${message}`;
         }
 
         if (aiData.intent === "add_product") {
-            const products = aiData.data;
-            let exist = await Product.findOne({ userId });
+            try {
+                const products = aiData.data;
+                if (!products || !Array.isArray(products)) {
+                    return res.json({ reply: "Invalid product data format." });
+                }
+                
+                let exist = await Product.findOne({ userId });
 
-            if (!exist) {
-                const product = await Product.create({ userId, allProducts: products });
-                return res.json({ reply: `✅ ${products.length} product(s) added successfully.`, product });
+                if (!exist) {
+                    const product = await Product.create({ userId, allProducts: products });
+                    return res.json({ reply: `✅ ${products.length} product(s) added successfully.`, product });
+                }
+
+                exist.allProducts.push(...products);
+                await exist.save();
+                return res.json({ reply: `✅ ${products.length} product(s) added successfully.`, exist });
+            } catch (dbError) {
+                console.error('Database error in add_product (no productId):', dbError);
+                return res.json({ reply: "Failed to add product. Please try again." });
             }
-
-            exist.allProducts.push(...products);
-            await exist.save();
-            return res.json({ reply: `✅ ${products.length} product(s) added successfully.`, exist });
         }
 
         if (aiData.intent === "add_stock") {
@@ -173,8 +225,18 @@ User: ${message}`;
         res.json({ reply: "I didn't understand your request." });
 
     } catch (error) {
-        console.error("AI API Error:", error.response?.data || error.message);
-        res.status(500).json({ reply: "AI request failed." });
+        console.error("Chat AI Error:", error);
+        console.error("Error details:", {
+            message: error.message,
+            stack: error.stack,
+            response: error.response?.data
+        });
+        
+        // Return a user-friendly error message
+        res.status(500).json({ 
+            reply: "Sorry, I encountered an error. Please try again later.",
+            error: process.env.NODE_ENV === 'development' ? error.message : undefined
+        });
     }
 });
 
