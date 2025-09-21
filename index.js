@@ -132,10 +132,24 @@ User: ${message}`;
         } catch (parseError) {
             console.error('JSON Parse Error:', parseError);
             console.error('Failed to parse AI text:', aiText);
-            return res.json({ reply: "I had trouble understanding that. Could you please rephrase your request?" });
+            // Try to extract JSON from the text if it's wrapped in other text
+            const jsonMatch = aiText.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                try {
+                    aiData = JSON.parse(jsonMatch[0]);
+                    console.log('Successfully extracted JSON from wrapped text');
+                } catch (secondParseError) {
+                    console.error('Second parse attempt failed:', secondParseError);
+                    return res.json({ reply: "I had trouble understanding that. Could you please rephrase your request?" });
+                }
+            } else {
+                return res.json({ reply: "I had trouble understanding that. Could you please rephrase your request?" });
+            }
         }
 
         console.log('Parsed AI Data:', aiData);
+        console.log('AI Intent:', aiData.intent);
+        console.log('AI Data:', aiData.data);
 
         if (productId) {
             if (aiData.intent === "add_stock") {
@@ -164,22 +178,45 @@ User: ${message}`;
             if (aiData.intent === "add_product") {
                 try {
                     const products = aiData.data;
+                    console.log('AI Product Data:', JSON.stringify(products, null, 2));
+                    
                     if (!products || !Array.isArray(products)) {
+                        console.log('Invalid product data format - not an array:', typeof products);
                         return res.json({ reply: "Invalid product data format." });
                     }
                     
+                    // Validate each product has required fields
+                    for (let i = 0; i < products.length; i++) {
+                        const product = products[i];
+                        if (!product.name || !product.description || !product.measure) {
+                            console.log(`Product ${i} missing required fields:`, product);
+                            return res.json({ reply: `Product ${i + 1} is missing required fields (name, description, measure).` });
+                        }
+                    }
+                    
+                    console.log('Creating/finding product document for userId:', userId);
                     let exist = await Product.findOne({ userId });
 
                     if (!exist) {
+                        console.log('No existing product document found, creating new one');
                         const product = await Product.create({ userId, allProducts: products });
+                        console.log('Product created successfully:', product);
                         return res.json({ reply: `✅ ${products.length} product(s) added successfully.`, product });
                     }
 
+                    console.log('Existing product document found, adding new products');
                     exist.allProducts.push(...products);
                     await exist.save();
+                    console.log('Products added to existing document successfully');
                     return res.json({ reply: `✅ ${products.length} product(s) added successfully.`, exist });
                 } catch (dbError) {
                     console.error('Database error in add_product:', dbError);
+                    console.error('Error details:', {
+                        message: dbError.message,
+                        name: dbError.name,
+                        code: dbError.code,
+                        errors: dbError.errors
+                    });
                     return res.json({ reply: "Failed to add product. Please try again." });
                 }
             }
@@ -194,22 +231,45 @@ User: ${message}`;
         if (aiData.intent === "add_product") {
             try {
                 const products = aiData.data;
+                console.log('AI Product Data (no productId):', JSON.stringify(products, null, 2));
+                
                 if (!products || !Array.isArray(products)) {
+                    console.log('Invalid product data format - not an array:', typeof products);
                     return res.json({ reply: "Invalid product data format." });
                 }
                 
+                // Validate each product has required fields
+                for (let i = 0; i < products.length; i++) {
+                    const product = products[i];
+                    if (!product.name || !product.description || !product.measure) {
+                        console.log(`Product ${i} missing required fields:`, product);
+                        return res.json({ reply: `Product ${i + 1} is missing required fields (name, description, measure).` });
+                    }
+                }
+                
+                console.log('Creating/finding product document for userId (no productId):', userId);
                 let exist = await Product.findOne({ userId });
 
                 if (!exist) {
+                    console.log('No existing product document found, creating new one (no productId)');
                     const product = await Product.create({ userId, allProducts: products });
+                    console.log('Product created successfully (no productId):', product);
                     return res.json({ reply: `✅ ${products.length} product(s) added successfully.`, product });
                 }
 
+                console.log('Existing product document found, adding new products (no productId)');
                 exist.allProducts.push(...products);
                 await exist.save();
+                console.log('Products added to existing document successfully (no productId)');
                 return res.json({ reply: `✅ ${products.length} product(s) added successfully.`, exist });
             } catch (dbError) {
                 console.error('Database error in add_product (no productId):', dbError);
+                console.error('Error details (no productId):', {
+                    message: dbError.message,
+                    name: dbError.name,
+                    code: dbError.code,
+                    errors: dbError.errors
+                });
                 return res.json({ reply: "Failed to add product. Please try again." });
             }
         }
