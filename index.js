@@ -13,7 +13,7 @@ import User from './model/User.js';
 import Stock from './model/Stock.js';
 
 const PORT = process.env.PORT || 5000;
-const MONGO_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/restocker';
+const MONGO_URI = process.env.MONGODB_URI;
 
 const app = express();
 

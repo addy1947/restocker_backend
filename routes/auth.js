@@ -4,7 +4,7 @@ import jwt from 'jsonwebtoken';
 import User from '../model/User.js';
 
 const router = express.Router();
-const JWT_SECRET = process.env.JWT_SECRET || 'howareyou??madam';
+const JWT_SECRET = process.env.JWT_SECRET;
 const JWT_EXPIRES_IN = '3d';
 
 const createToken = (userId) => {
