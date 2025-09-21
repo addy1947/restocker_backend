@@ -75,6 +75,10 @@ app.post("/chat/ai", async (req, res) => {
             return res.status(400).json({ reply: "Message is required" });
         }
         
+        if (!userId) {
+            return res.status(400).json({ reply: "User ID is required" });
+        }
+        
         const apiKey = process.env.GEMINI_API_KEY;
         if (!apiKey) {
             console.error('GEMINI_API_KEY not configured');
@@ -82,49 +86,47 @@ app.post("/chat/ai", async (req, res) => {
         }
 
         const prompt = productId
-            ? `You are a Restocker AI and here to help.
-Do not answer anything else. Do not have simple chat.
-You are an assistant that detects if the user wants to add stock for a product or add a new product.
-If adding stock, respond ONLY with:
-{"intent":"add_stock","data":[{"expiryDate":"YYYY-MM-DD","qty":number}, {...}]}
-If adding product, respond ONLY with:
-{"intent":"add_product","data":[{"name":"...","description":"...","measure":"..."}, {...}]}
-If not adding anything, respond ONLY with:
-{"intent":"chat","reply":"<your reply here>"}
-Do not add any text before or after the JSON.
-User: ${message}`
-            : `You are a Restocker AI and here to help.
-Do not answer anything else. Do not have simple chat.
-You are an assistant that detects if the user wants to add one or more products to their inventory.
-If yes, respond ONLY with:
-{"intent":"add_product","data":[{"name":"...","description":"...","measure":"..."}, {...}]}
-If not, respond ONLY with:
-{"intent":"chat","reply":"<your reply here>"}
-Do not add any text before or after the JSON.
-User: ${message}`;
+            ? `You are a Restocker AI inventory assistant. Your job is to help users manage their inventory by detecting if they want to:
+1. Add stock for an existing product
+2. Add a new product to their inventory
+3. Just have a conversation
 
-        console.log('Making request to Gemini API...');
+IMPORTANT RULES:
+- For adding stock: respond with {"intent":"add_stock","data":[{"expiryDate":"YYYY-MM-DD","qty":number}]}
+- For adding products: respond with {"intent":"add_product","data":[{"name":"product name","description":"detailed description","measure":"kg|g|l|ml|liter|Liter|pcs|box|bag|bottle|can|pack|piece|other"}]}
+- For regular chat: respond with {"intent":"chat","reply":"your response"}
+- ONLY respond with valid JSON, no other text
+- For products, measure must be one of: kg, g, l, ml, liter, Liter, pcs, box, bag, bottle, can, pack, piece, other
+
+User message: ${message}`
+            : `You are a Restocker AI inventory assistant. Your job is to help users manage their inventory by detecting if they want to add new products to their inventory.
+
+IMPORTANT RULES:
+- If user wants to add products: respond with {"intent":"add_product","data":[{"name":"product name","description":"detailed description","measure":"kg|g|l|ml|liter|Liter|pcs|box|bag|bottle|can|pack|piece|other"}]}
+- If just chatting: respond with {"intent":"chat","reply":"your response"}
+- ONLY respond with valid JSON, no other text
+- For products, measure must be one of: kg, g, l, ml, liter, Liter, pcs, box, bag, bottle, can, pack, piece, other
+
+User message: ${message}`;
+
         const response = await axios.post(
             `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
             {
                 contents: [{ parts: [{ text: prompt }] }],
                 generationConfig: {
-                    temperature: 0.2,
-                    maxOutputTokens: 300
+                    temperature: 0.1,
+                    maxOutputTokens: 500
                 }
             }
         );
 
-        console.log('Gemini API response received');
         let aiText = response.data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
-        console.log('AI Text received:', aiText);
         
         if (!aiText) {
             return res.json({ reply: "I couldn't generate a response. Please try again." });
         }
         
         aiText = aiText.replace(/```json|```/g, "").trim();
-        console.log('Cleaned AI Text:', aiText);
 
         let aiData;
         try {
@@ -132,12 +134,10 @@ User: ${message}`;
         } catch (parseError) {
             console.error('JSON Parse Error:', parseError);
             console.error('Failed to parse AI text:', aiText);
-            // Try to extract JSON from the text if it's wrapped in other text
             const jsonMatch = aiText.match(/\{[\s\S]*\}/);
             if (jsonMatch) {
                 try {
                     aiData = JSON.parse(jsonMatch[0]);
-                    console.log('Successfully extracted JSON from wrapped text');
                 } catch (secondParseError) {
                     console.error('Second parse attempt failed:', secondParseError);
                     return res.json({ reply: "I had trouble understanding that. Could you please rephrase your request?" });
@@ -147,10 +147,6 @@ User: ${message}`;
             }
         }
 
-        console.log('Parsed AI Data:', aiData);
-        console.log('AI Intent:', aiData.intent);
-        console.log('AI Data:', aiData.data);
-
         if (productId) {
             if (aiData.intent === "add_stock") {
                 try {
@@ -159,16 +155,24 @@ User: ${message}`;
                         return res.json({ reply: "Invalid stock data format." });
                     }
                     
+                    // Validate stock entries
+                    for (let i = 0; i < stockEntries.length; i++) {
+                        const entry = stockEntries[i];
+                        if (!entry.expiryDate || !entry.qty || isNaN(entry.qty) || entry.qty <= 0) {
+                            return res.json({ reply: `Stock entry ${i + 1} is invalid. Please provide valid expiry date and quantity.` });
+                        }
+                    }
+                    
                     let stockDoc = await Stock.findOne({ userId, productId });
 
                     if (!stockDoc) {
                         stockDoc = await Stock.create({ userId, productId, stockDetail: stockEntries });
-                        return res.json({ reply: `✅ ${stockEntries.length} stock entry(ies) added successfully.`, stockDoc });
+                        return res.json({ reply: `✅ ${stockEntries.length} stock entry(ies) added successfully.` });
                     }
 
                     stockDoc.stockDetail.push(...stockEntries);
                     await stockDoc.save();
-                    return res.json({ reply: `✅ ${stockEntries.length} stock entry(ies) added successfully.`, stockDoc });
+                    return res.json({ reply: `✅ ${stockEntries.length} stock entry(ies) added successfully.` });
                 } catch (dbError) {
                     console.error('Database error in add_stock:', dbError);
                     return res.json({ reply: "Failed to add stock. Please try again." });
@@ -178,45 +182,35 @@ User: ${message}`;
             if (aiData.intent === "add_product") {
                 try {
                     const products = aiData.data;
-                    console.log('AI Product Data:', JSON.stringify(products, null, 2));
                     
                     if (!products || !Array.isArray(products)) {
-                        console.log('Invalid product data format - not an array:', typeof products);
                         return res.json({ reply: "Invalid product data format." });
                     }
                     
-                    // Validate each product has required fields
+                    // Validate each product has required fields and correct measure
+                    const validMeasures = ['kg', 'g', 'l', 'ml', 'liter', 'Liter', 'pcs', 'box', 'bag', 'bottle', 'can', 'pack', 'piece', 'other'];
                     for (let i = 0; i < products.length; i++) {
                         const product = products[i];
                         if (!product.name || !product.description || !product.measure) {
-                            console.log(`Product ${i} missing required fields:`, product);
                             return res.json({ reply: `Product ${i + 1} is missing required fields (name, description, measure).` });
+                        }
+                        if (!validMeasures.includes(product.measure)) {
+                            return res.json({ reply: `Product ${i + 1} has invalid measure. Must be one of: ${validMeasures.join(', ')}` });
                         }
                     }
                     
-                    console.log('Creating/finding product document for userId:', userId);
                     let exist = await Product.findOne({ userId });
 
                     if (!exist) {
-                        console.log('No existing product document found, creating new one');
                         const product = await Product.create({ userId, allProducts: products });
-                        console.log('Product created successfully:', product);
-                        return res.json({ reply: `✅ ${products.length} product(s) added successfully.`, product });
+                        return res.json({ reply: `✅ ${products.length} product(s) added successfully.` });
                     }
 
-                    console.log('Existing product document found, adding new products');
                     exist.allProducts.push(...products);
                     await exist.save();
-                    console.log('Products added to existing document successfully');
-                    return res.json({ reply: `✅ ${products.length} product(s) added successfully.`, exist });
+                    return res.json({ reply: `✅ ${products.length} product(s) added successfully.` });
                 } catch (dbError) {
                     console.error('Database error in add_product:', dbError);
-                    console.error('Error details:', {
-                        message: dbError.message,
-                        name: dbError.name,
-                        code: dbError.code,
-                        errors: dbError.errors
-                    });
                     return res.json({ reply: "Failed to add product. Please try again." });
                 }
             }
@@ -231,45 +225,35 @@ User: ${message}`;
         if (aiData.intent === "add_product") {
             try {
                 const products = aiData.data;
-                console.log('AI Product Data (no productId):', JSON.stringify(products, null, 2));
                 
                 if (!products || !Array.isArray(products)) {
-                    console.log('Invalid product data format - not an array:', typeof products);
                     return res.json({ reply: "Invalid product data format." });
                 }
                 
-                // Validate each product has required fields
+                // Validate each product has required fields and correct measure
+                const validMeasures = ['kg', 'g', 'l', 'ml', 'liter', 'Liter', 'pcs', 'box', 'bag', 'bottle', 'can', 'pack', 'piece', 'other'];
                 for (let i = 0; i < products.length; i++) {
                     const product = products[i];
                     if (!product.name || !product.description || !product.measure) {
-                        console.log(`Product ${i} missing required fields:`, product);
                         return res.json({ reply: `Product ${i + 1} is missing required fields (name, description, measure).` });
+                    }
+                    if (!validMeasures.includes(product.measure)) {
+                        return res.json({ reply: `Product ${i + 1} has invalid measure. Must be one of: ${validMeasures.join(', ')}` });
                     }
                 }
                 
-                console.log('Creating/finding product document for userId (no productId):', userId);
                 let exist = await Product.findOne({ userId });
 
                 if (!exist) {
-                    console.log('No existing product document found, creating new one (no productId)');
                     const product = await Product.create({ userId, allProducts: products });
-                    console.log('Product created successfully (no productId):', product);
-                    return res.json({ reply: `✅ ${products.length} product(s) added successfully.`, product });
+                    return res.json({ reply: `✅ ${products.length} product(s) added successfully.` });
                 }
 
-                console.log('Existing product document found, adding new products (no productId)');
                 exist.allProducts.push(...products);
                 await exist.save();
-                console.log('Products added to existing document successfully (no productId)');
-                return res.json({ reply: `✅ ${products.length} product(s) added successfully.`, exist });
+                return res.json({ reply: `✅ ${products.length} product(s) added successfully.` });
             } catch (dbError) {
-                console.error('Database error in add_product (no productId):', dbError);
-                console.error('Error details (no productId):', {
-                    message: dbError.message,
-                    name: dbError.name,
-                    code: dbError.code,
-                    errors: dbError.errors
-                });
+                console.error('Database error in add_product:', dbError);
                 return res.json({ reply: "Failed to add product. Please try again." });
             }
         }
@@ -311,15 +295,21 @@ app.post("/:id/product/add", async (req, res) => {
             return res.status(400).json({ error: 'Name, description, and measure are required' });
         }
 
+        // Validate measure is valid
+        const validMeasures = ['kg', 'g', 'l', 'ml', 'liter', 'Liter', 'pcs', 'box', 'bag', 'bottle', 'can', 'pack', 'piece', 'other'];
+        if (!validMeasures.includes(measure)) {
+            return res.status(400).json({ error: `Invalid measure. Must be one of: ${validMeasures.join(', ')}` });
+        }
+
         const exist = await Product.findOne({ userId: id });
         if (!exist) {
-            const product = await Product.create({ userId: id, allProducts: [{ name, description, measure }] });
-            return res.status(201).json({ message: "Product added successfully", product });
+            await Product.create({ userId: id, allProducts: [{ name, description, measure }] });
+            return res.status(201).json({ message: "Product added successfully" });
         }
         
         exist.allProducts.push({ name, description, measure });
         await exist.save();
-        res.status(200).json({ message: "Product added successfully", exist });
+        res.status(200).json({ message: "Product added successfully" });
     } catch (error) {
         console.error('Error adding product:', error);
         res.status(500).json({ error: 'Failed to add product' });
@@ -357,16 +347,21 @@ app.post("/:id/product/:productId/stock/add", async (req, res) => {
             return res.status(400).json({ error: 'Quantity must be a positive number' });
         }
 
+        // Validate expiry date format
+        const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+        if (!dateRegex.test(expiryDate)) {
+            return res.status(400).json({ error: 'Expiry date must be in YYYY-MM-DD format' });
+        }
+
         const stock = await Stock.findOne({ userId: id, productId });
         if (!stock) {
-            const newStock = await Stock.create({ userId: id, productId, stockDetail: [{ expiryDate, qty: Number(qty) }] });
-            await newStock.save();
-            return res.status(201).json({ message: "Stock added successfully", newStock });
+            await Stock.create({ userId: id, productId, stockDetail: [{ expiryDate, qty: Number(qty) }] });
+            return res.status(201).json({ message: "Stock added successfully" });
         }
         
         stock.stockDetail.push({ expiryDate, qty: Number(qty) });
         await stock.save();
-        res.status(200).json({ message: "Stock added successfully", stock });
+        res.status(200).json({ message: "Stock added successfully" });
     } catch (error) {
         console.error('Error adding stock:', error);
         res.status(500).json({ error: 'Failed to add stock' });
@@ -411,7 +406,7 @@ app.post("/:id/product/:productId/stock/use", async (req, res) => {
         
         stockItem.entry.push({ usedQty: Number(usedQty), time: new Date() });
         await stock.save();
-        res.status(200).json({ message: "Stock used successfully", stock });
+        res.status(200).json({ message: "Stock used successfully" });
     } catch (error) {
         console.error('Error using stock:', error);
         res.status(500).json({ error: 'Failed to use stock' });
@@ -423,12 +418,12 @@ app.get("/:id/instock", async (req, res) => {
     try {
         const instocks = await Stock.find({ userId: id });
         if (!instocks || instocks.length === 0) {
-            return res.status(200).json({ message: "No stock found", stockWithProducts: [], product: null });
+            return res.status(200).json({ message: "No stock found", stockWithProducts: [] });
         }
 
         const product = await Product.findOne({ userId: id });
         if (!product) {
-            return res.status(200).json({ message: "No product found", stockWithProducts: [], product: null });
+            return res.status(200).json({ message: "No product found", stockWithProducts: [] });
         }
 
         const stockWithProducts = instocks.map(stock => ({
@@ -436,7 +431,7 @@ app.get("/:id/instock", async (req, res) => {
             stockDetail: stock.stockDetail
         }));
 
-        res.status(200).json({ message: "Stock is found", stockWithProducts, product });
+        res.status(200).json({ message: "Stock found", stockWithProducts, products: product.allProducts });
     } catch (error) {
         console.error('Error fetching instock:', error);
         res.status(500).json({ error: 'Failed to fetch stock data' });

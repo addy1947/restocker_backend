@@ -42,7 +42,8 @@ router.post('/signup', async (req, res) => {
 
         res.status(201).json({ message: 'User created & logged in', token: token, userId: user._id });
     } catch (err) {
-        res.status(500).json({ error: 'Signup failed: ' + err.message });
+        console.error('Signup error:', err);
+        res.status(500).json({ error: 'Signup failed' });
     }
 });
 
@@ -67,7 +68,8 @@ router.post('/login', async (req, res) => {
 
         res.status(200).json({ message: 'Logged in', token: token, userId: user._id });
     } catch (err) {
-        res.status(500).json({ error: 'Login failed' + err });
+        console.error('Login error:', err);
+        res.status(500).json({ error: 'Login failed' });
     }
 });
 
@@ -88,7 +90,8 @@ router.get('/verify', async (req, res) => {
 
         res.status(200).json({ user });
     } catch (err) {
-        res.status(401).json({ error: 'Invalid token' + err });
+        console.error('Token verification error:', err);
+        res.status(401).json({ error: 'Invalid token' });
     }
 });
 
@@ -109,7 +112,8 @@ router.get('/me', async (req, res) => {
 
         res.status(200).json({ user });
     } catch (err) {
-        res.status(401).json({ error: 'Invalid token' + err });
+        console.error('Token verification error:', err);
+        res.status(401).json({ error: 'Invalid token' });
     }
 });
 
