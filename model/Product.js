@@ -12,7 +12,7 @@ const proSchema = new mongoose.Schema({
     measure: {
         type: String, 
         required: true, 
-        enum: ['kg', 'g', 'l', 'ml', 'pcs', 'box', 'bag','bottle', 'can', 'pack', 'piece', 'other'] 
+        enum: ['kg', 'g', 'l', 'ml', 'liter', 'Liter', 'pcs', 'box', 'bag','bottle', 'can', 'pack', 'piece', 'other'] 
     },
 
 },{_id:true})
