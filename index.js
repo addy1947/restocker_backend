@@ -187,75 +187,157 @@ User: ${message}`;
 app.post("/:id/product/add", async (req, res) => {
     const { id } = req.params;
     const { name, description, measure } = req.body;
-    const exist = await Product.findOne({ userId: id });
-    if (!exist) {
-        const product = await Product.create({ userId: id, allProducts: [{ name, description, measure }] });
-        return res.status(201).json({ message: "Product added successfully", product });
+    
+    try {
+        // Validate required fields
+        if (!name || !description || !measure) {
+            return res.status(400).json({ error: 'Name, description, and measure are required' });
+        }
+
+        const exist = await Product.findOne({ userId: id });
+        if (!exist) {
+            const product = await Product.create({ userId: id, allProducts: [{ name, description, measure }] });
+            return res.status(201).json({ message: "Product added successfully", product });
+        }
+        
+        exist.allProducts.push({ name, description, measure });
+        await exist.save();
+        res.status(200).json({ message: "Product added successfully", exist });
+    } catch (error) {
+        console.error('Error adding product:', error);
+        res.status(500).json({ error: 'Failed to add product' });
     }
-    exist.allProducts.push({ name, description, measure });
-    await exist.save();
-    res.status(200).json({ message: "Product added successfully", exist });
 });
 
 // Stock routes
 app.get("/:id/product/:productId/stock", async (req, res) => {
     const { id, productId } = req.params;
-    const stock = await Stock.findOne({ userId: id, productId });
-    if (!stock) return res.status(404).json({ message: "Stock not found" });
-    res.status(200).json(stock.stockDetail);
+    
+    try {
+        const stock = await Stock.findOne({ userId: id, productId });
+        if (!stock) {
+            return res.status(200).json([]); // Return empty array instead of 404
+        }
+        res.status(200).json(stock.stockDetail || []);
+    } catch (error) {
+        console.error('Error fetching stock:', error);
+        res.status(500).json({ error: 'Failed to fetch stock data' });
+    }
 });
 
 app.post("/:id/product/:productId/stock/add", async (req, res) => {
     const { id, productId } = req.params;
     const { expiryDate, qty } = req.body;
-    const stock = await Stock.findOne({ userId: id, productId });
-    if (!stock) {
-        const newStock = await Stock.create({ userId: id, productId, stockDetail: [{ expiryDate, qty }] });
-        await newStock.save();
-        return res.status(201).json({ message: "Stock added successfully", newStock });
+    
+    try {
+        // Validate required fields
+        if (!expiryDate || !qty) {
+            return res.status(400).json({ error: 'Expiry date and quantity are required' });
+        }
+
+        // Validate qty is a number
+        if (isNaN(qty) || qty <= 0) {
+            return res.status(400).json({ error: 'Quantity must be a positive number' });
+        }
+
+        const stock = await Stock.findOne({ userId: id, productId });
+        if (!stock) {
+            const newStock = await Stock.create({ userId: id, productId, stockDetail: [{ expiryDate, qty: Number(qty) }] });
+            await newStock.save();
+            return res.status(201).json({ message: "Stock added successfully", newStock });
+        }
+        
+        stock.stockDetail.push({ expiryDate, qty: Number(qty) });
+        await stock.save();
+        res.status(200).json({ message: "Stock added successfully", stock });
+    } catch (error) {
+        console.error('Error adding stock:', error);
+        res.status(500).json({ error: 'Failed to add stock' });
     }
-    stock.stockDetail.push({ expiryDate, qty });
-    await stock.save();
-    res.status(200).json({ message: "Stock added successfully", stock });
 });
 
 app.post("/:id/product/:productId/stock/use", async (req, res) => {
     const { id, productId } = req.params;
     const { usedQty, stockId } = req.body;
-    const stock = await Stock.findOne({ userId: id, productId, stockDetail: { $elemMatch: { _id: stockId } } });
-    if (!stock) return res.status(404).json({ message: "Stock not found" });
+    
+    try {
+        // Validate required fields
+        if (!usedQty || !stockId) {
+            return res.status(400).json({ error: 'Used quantity and stock ID are required' });
+        }
 
-    const stockItem = stock.stockDetail.find(item => item._id.toString() === stockId);
-    if (!stockItem) return res.status(404).json({ message: "Stock item not found" });
+        // Validate usedQty is a number
+        if (isNaN(usedQty) || usedQty <= 0) {
+            return res.status(400).json({ error: 'Used quantity must be a positive number' });
+        }
 
-    if (usedQty > stockItem.qty) return res.status(400).json({ message: "Used quantity exceeds available stock" });
+        const stock = await Stock.findOne({ userId: id, productId, stockDetail: { $elemMatch: { _id: stockId } } });
+        if (!stock) {
+            return res.status(404).json({ message: "Stock not found" });
+        }
 
-    stockItem.qty -= usedQty;
-    stockItem.entry.push({ usedQty, time: new Date() });
-    await stock.save();
-    res.status(200).json({ message: "Stock used successfully", stock });
+        const stockItem = stock.stockDetail.find(item => item._id.toString() === stockId);
+        if (!stockItem) {
+            return res.status(404).json({ message: "Stock item not found" });
+        }
+
+        if (usedQty > stockItem.qty) {
+            return res.status(400).json({ message: "Used quantity exceeds available stock" });
+        }
+
+        stockItem.qty -= Number(usedQty);
+        
+        // Initialize entry array if it doesn't exist
+        if (!stockItem.entry) {
+            stockItem.entry = [];
+        }
+        
+        stockItem.entry.push({ usedQty: Number(usedQty), time: new Date() });
+        await stock.save();
+        res.status(200).json({ message: "Stock used successfully", stock });
+    } catch (error) {
+        console.error('Error using stock:', error);
+        res.status(500).json({ error: 'Failed to use stock' });
+    }
 });
 
 app.get("/:id/instock", async (req, res) => {
     const { id } = req.params;
-    const instocks = await Stock.find({ userId: id });
-    if (!instocks || instocks.length === 0) return res.status(404).json({ message: "No stock found" });
+    try {
+        const instocks = await Stock.find({ userId: id });
+        if (!instocks || instocks.length === 0) {
+            return res.status(200).json({ message: "No stock found", stockWithProducts: [], product: null });
+        }
 
-    const product = await Product.findOne({ userId: id });
-    if (!product) return res.status(404).json({ message: "No product found" });
+        const product = await Product.findOne({ userId: id });
+        if (!product) {
+            return res.status(200).json({ message: "No product found", stockWithProducts: [], product: null });
+        }
 
-    const stockWithProducts = instocks.map(stock => ({
-        productId: stock.productId,
-        stockDetail: stock.stockDetail
-    }));
+        const stockWithProducts = instocks.map(stock => ({
+            productId: stock.productId,
+            stockDetail: stock.stockDetail
+        }));
 
-    res.status(200).json({ message: "Stock is found", stockWithProducts, product });
+        res.status(200).json({ message: "Stock is found", stockWithProducts, product });
+    } catch (error) {
+        console.error('Error fetching instock:', error);
+        res.status(500).json({ error: 'Failed to fetch stock data' });
+    }
 });
 
 app.get("/:id/product", async (req, res) => {
     const { id } = req.params;
-    const product = await Product.findOne({ userId: id });
-    res.status(200).json(product.allProducts);
+    try {
+        const product = await Product.findOne({ userId: id });
+        if (!product) {
+            return res.status(200).json([]); // Return empty array if no products found
+        }
+        res.status(200).json(product.allProducts || []);
+    } catch (error) {
+        console.error('Error fetching products:', error);
+        res.status(500).json({ error: 'Failed to fetch products' });
+    }
 });
 
 // Global error handler
