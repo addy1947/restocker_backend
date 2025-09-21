@@ -34,11 +34,6 @@ app.use(cookieParser());
 // Mount auth routes
 app.use('/auth', authRoutes);
 
-// 404 handler
-app.use((req, res) => {
-    res.status(404).json({ error: 'Not Found' });
-});
-
 // Health check endpoint
 app.get('/health', (req, res) => {
     res.status(200).json({ 
