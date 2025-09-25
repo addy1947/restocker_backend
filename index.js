@@ -477,7 +477,7 @@ app.get("/:id/instock", async (req, res) => {
             stockDetail: stock.stockDetail
         }));
 
-        res.status(200).json({ message: "Stock found", stockWithProducts, products: product.allProducts });
+        res.status(200).json({ message: "Stock found", stockWithProducts, product: { allProducts: product.allProducts } });
     } catch (error) {
         console.error('Error fetching instock:', error);
         res.status(500).json({ error: 'Failed to fetch stock data' });
