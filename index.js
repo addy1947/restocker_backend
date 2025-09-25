@@ -91,21 +91,31 @@ app.post("/chat/ai", async (req, res) => {
 2. Add a new product to their inventory
 3. Just have a conversation
 
+CRITICAL: You MUST respond with ONLY valid JSON. No explanations, no additional text.
+
 IMPORTANT RULES:
 - For adding stock: respond with {"intent":"add_stock","data":[{"expiryDate":"YYYY-MM-DD","qty":number}]}
 - For adding products: respond with {"intent":"add_product","data":[{"name":"product name","description":"detailed description","measure":"kg|g|l|ml|liter|Liter|pcs|box|bag|bottle|can|pack|piece|other"}]}
 - For regular chat: respond with {"intent":"chat","reply":"your response"}
 - ONLY respond with valid JSON, no other text
 - For products, measure must be one of: kg, g, l, ml, liter, Liter, pcs, box, bag, bottle, can, pack, piece, other
+- Use double quotes for all strings
+- No trailing commas
+- Ensure all JSON is properly formatted
 
 User message: ${message}`
             : `You are a Restocker AI inventory assistant. Your job is to help users manage their inventory by detecting if they want to add new products to their inventory.
+
+CRITICAL: You MUST respond with ONLY valid JSON. No explanations, no additional text.
 
 IMPORTANT RULES:
 - If user wants to add products: respond with {"intent":"add_product","data":[{"name":"product name","description":"detailed description","measure":"kg|g|l|ml|liter|Liter|pcs|box|bag|bottle|can|pack|piece|other"}]}
 - If just chatting: respond with {"intent":"chat","reply":"your response"}
 - ONLY respond with valid JSON, no other text
 - For products, measure must be one of: kg, g, l, ml, liter, Liter, pcs, box, bag, bottle, can, pack, piece, other
+- Use double quotes for all strings
+- No trailing commas
+- Ensure all JSON is properly formatted
 
 User message: ${message}`;
 
@@ -134,17 +144,53 @@ User message: ${message}`;
         } catch (parseError) {
             console.error('JSON Parse Error:', parseError);
             console.error('Failed to parse AI text:', aiText);
-            const jsonMatch = aiText.match(/\{[\s\S]*\}/);
+            
+            // Try multiple JSON extraction strategies
+            let jsonText = aiText;
+            
+            // Remove any markdown code blocks
+            jsonText = jsonText.replace(/```json\s*/g, '').replace(/```\s*/g, '');
+            
+            // Try to find JSON object in the text
+            const jsonMatch = jsonText.match(/\{[\s\S]*\}/);
             if (jsonMatch) {
                 try {
                     aiData = JSON.parse(jsonMatch[0]);
                 } catch (secondParseError) {
                     console.error('Second parse attempt failed:', secondParseError);
-                    return res.json({ reply: "I had trouble understanding that. Could you please rephrase your request?" });
+                    console.error('Attempted to parse:', jsonMatch[0]);
+                    
+                    // Try to clean up common issues
+                    let cleanedJson = jsonMatch[0]
+                        .replace(/,\s*}/g, '}')  // Remove trailing commas
+                        .replace(/,\s*]/g, ']')  // Remove trailing commas in arrays
+                        .replace(/'/g, '"');     // Replace single quotes with double quotes
+                    
+                    try {
+                        aiData = JSON.parse(cleanedJson);
+                    } catch (thirdParseError) {
+                        console.error('Third parse attempt failed:', thirdParseError);
+                        return res.json({ 
+                            reply: "I had trouble understanding your request. Please try rephrasing it or be more specific about what you want to add.",
+                            error: process.env.NODE_ENV === 'development' ? `Parse error: ${thirdParseError.message}` : undefined
+                        });
+                    }
                 }
             } else {
-                return res.json({ reply: "I had trouble understanding that. Could you please rephrase your request?" });
+                return res.json({ 
+                    reply: "I had trouble understanding your request. Please try rephrasing it or be more specific about what you want to add.",
+                    error: process.env.NODE_ENV === 'development' ? `No JSON found in response: ${aiText}` : undefined
+                });
             }
+        }
+
+        // Validate the AI response structure
+        if (!aiData || typeof aiData !== 'object' || !aiData.intent) {
+            console.error('Invalid AI response structure:', aiData);
+            return res.json({ 
+                reply: "I had trouble processing your request. Please try rephrasing it.",
+                error: process.env.NODE_ENV === 'development' ? 'Invalid response structure' : undefined
+            });
         }
 
         if (productId) {
