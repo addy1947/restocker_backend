@@ -450,7 +450,7 @@ app.post("/:id/product/:productId/stock/use", async (req, res) => {
             stockItem.entry = [];
         }
         
-        stockItem.entry.push({ usedQty: Number(usedQty), time: new Date() });
+        stockItem.entry.push({ usedQty: Number(usedQty), time: new Date(), type: 'sub' });
         await stock.save();
         res.status(200).json({ message: "Stock used successfully" });
     } catch (error) {
