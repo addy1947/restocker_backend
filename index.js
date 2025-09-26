@@ -120,7 +120,7 @@ IMPORTANT RULES:
 User message: ${message}`;
 
         const response = await axios.post(
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${apiKey}`,
             {
                 contents: [{ parts: [{ text: prompt }] }],
                 generationConfig: {
@@ -128,7 +128,18 @@ User message: ${message}`;
                     maxOutputTokens: 500
                 }
             }
-        );
+        ).catch(apiError => {
+            // Handle specific API errors
+            if (apiError.response?.status === 404) {
+                console.error('Gemini API: Model not found. Check if the model name is correct and the API key has access.');
+                throw new Error('AI service temporarily unavailable. Please try again later.');
+            }
+            if (apiError.response?.status === 403) {
+                console.error('Gemini API: Access forbidden. Check API key permissions.');
+                throw new Error('AI service access denied. Please contact support.');
+            }
+            throw apiError;
+        });
 
         let aiText = response.data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
         
@@ -315,11 +326,14 @@ User message: ${message}`;
         res.json({ reply: "I didn't understand your request." });
 
     } catch (error) {
-        console.error("Chat AI Error:", error);
+        console.error("Chat AI Error:", error.message);
         console.error("Error details:", {
             message: error.message,
-            stack: error.stack,
-            response: error.response?.data
+            status: error.response?.status,
+            statusText: error.response?.statusText,
+            // Don't log full response to avoid exposing sensitive data
+            hasResponse: !!error.response,
+            hasData: !!error.response?.data
         });
         
         // Return a user-friendly error message
